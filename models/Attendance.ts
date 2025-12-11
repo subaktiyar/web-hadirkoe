@@ -8,6 +8,7 @@ export interface IAttendance extends Document {
   longitude: string;
   workType: string;
   information: string;
+  photoEvidence?: string;
   createdAt: Date;
 }
 
@@ -19,6 +20,7 @@ const AttendanceSchema: Schema = new Schema({
   longitude: { type: String, required: true },
   workType: { type: String, required: true },
   information: { type: String },
+  photoEvidence: { type: String },
   createdAt: { type: Date, default: Date.now },
 });
 

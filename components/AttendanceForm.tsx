@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Camera, MapPin, User, FileText, Info, Send, Loader2, Navigation, Trash2, Moon, Sun } from "lucide-react";
+import { Camera, MapPin, User, FileText, Info, Send, Loader2, Navigation, Trash2, Moon, Sun, Upload, Image as ImageIcon } from "lucide-react";
 import dynamic from "next/dynamic";
+import imageCompression from "browser-image-compression";
+import Swal from "sweetalert2";
 
 const MapComponent = dynamic(() => import("./LeafletMap"), {
   ssr: false,
@@ -79,13 +81,6 @@ export default function AttendanceForm() {
         }
         const data = await response.json();
 
-        console.log(data.data);
-        console.log({
-          apkVersion: data.data.apkVersion || [],
-          presenceType: data.data.presenceType || [],
-          workType: data.data.workType || [],
-        });
-
         if (data) {
           setOptions({
             apkVersion: data.data.apkVersion || [],
@@ -104,6 +99,8 @@ export default function AttendanceForm() {
   const [formData, setFormData] = useState(defaultValue);
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [photoMode, setPhotoMode] = useState<"camera" | "upload">("camera");
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -112,7 +109,11 @@ export default function AttendanceForm() {
 
   const handleLocationClick = () => {
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by your browser");
+      Swal.fire({
+        icon: "error",
+        title: "Oops...",
+        text: "Geolocation is not supported by your browser",
+      });
       return;
     }
 
@@ -128,20 +129,52 @@ export default function AttendanceForm() {
       },
       (error) => {
         console.error("Location error:", error);
-        alert("Unable to retrieve your location");
+        Swal.fire({
+          icon: "error",
+          title: "Location Error",
+          text: "Unable to retrieve your location",
+        });
         setLoadingLocation(false);
       }
     );
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      // Validate file type
+      if (!file.type.startsWith("image/")) {
+        Swal.fire({
+          icon: "warning",
+          title: "Invalid File",
+          text: "Please select an image file (e.g., JPG, PNG).",
+        });
+        e.target.value = ""; // Clear the input
+        return;
+      }
+
+      try {
+        const options = {
+          maxSizeMB: 0.5,
+          maxWidthOrHeight: 1280,
+          useWebWorker: true,
+        };
+        const compressedFile = await imageCompression(file, options);
+        setImageFile(compressedFile);
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(compressedFile);
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        Swal.fire({
+          icon: "error",
+          title: "Compression Error",
+          text: "Failed to compress image",
+        });
+      }
     }
   };
 
@@ -149,19 +182,54 @@ export default function AttendanceForm() {
     e.preventDefault();
 
     if (!formData.latitude || !formData.longitude) {
-      alert("Please get your location first");
+      Swal.fire({
+        icon: "warning",
+        title: "Location Required",
+        text: "Please get your location first",
+      });
       return;
     }
 
     setSubmitLoading(true);
 
     try {
+      let photoUrl = "";
+      let photoBase64 = "";
+
+      if (imageFile) {
+        // Upload to Vercel Blob
+        const uploadResponse = await fetch(`/api/upload?filename=${imageFile.name}`, {
+          method: "POST",
+          body: imageFile,
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error("Failed to upload image");
+        }
+
+        const blob = await uploadResponse.json();
+        photoUrl = blob.url;
+
+        // Convert to Base64 for internal API payload (external sync)
+        const reader = new FileReader();
+        photoBase64 = await new Promise((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(imageFile);
+        });
+      }
+
+      const payload = {
+        ...formData,
+        photoEvidence: photoUrl,
+        photoBase64: photoBase64, // Send Base64 to backend
+      };
+
       const response = await fetch("/api/attendance", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();
@@ -170,8 +238,13 @@ export default function AttendanceForm() {
         throw new Error(result.error || "Failed to submit");
       }
 
-      console.log("Form Submitted", result);
-      alert("Attendance Submitted Successfully!");
+      Swal.fire({
+        icon: "success",
+        title: "Success!",
+        text: "Attendance Submitted Successfully!",
+        timer: 2000,
+        showConfirmButton: false,
+      });
 
       // Reset form or redirect if needed
       setFormData((prev) => ({
@@ -183,16 +256,32 @@ export default function AttendanceForm() {
     } catch (error: unknown) {
       console.error(error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      alert(`Error: ${errorMessage}`);
+      Swal.fire({
+        icon: "error",
+        title: "Submission Failed",
+        text: errorMessage,
+      });
     } finally {
       setSubmitLoading(false);
     }
   };
 
-  const handleClear = () => {
-    if (confirm("Are you sure you want to clear the form?")) {
+  const handleClear = async () => {
+    const result = await Swal.fire({
+      title: "Are you sure?",
+      text: "You want to clear the form?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#3085d6",
+      confirmButtonText: "Yes, clear it!",
+    });
+
+    if (result.isConfirmed) {
       setFormData(defaultValue);
       setImagePreview(null);
+      setImageFile(null);
+      Swal.fire("Cleared!", "Form has been reset.", "success");
     }
   };
 
@@ -224,7 +313,7 @@ export default function AttendanceForm() {
       } else {
         setPassKeyError(data.error || "Invalid PassKey");
       }
-    } catch (error) {
+    } catch {
       setPassKeyError("Failed to validate PassKey");
     } finally {
       setPassKeyLoading(false);
@@ -233,7 +322,11 @@ export default function AttendanceForm() {
 
   if (!isAuthenticated) {
     return (
-      <div className={`min-h-screen ${darkMode ? "bg-neutral-900 text-white" : "bg-gray-100 text-slate-800"} flex items-center justify-center p-4 font-sans transition-colors duration-300`}>
+      <div
+        className={`min-h-screen ${
+          darkMode ? "bg-[conic-gradient(at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-blue-950 to-slate-900 text-white" : "bg-gray-100 text-slate-800"
+        } flex items-center justify-center p-4 font-sans transition-colors duration-300`}
+      >
         <div className={`w-full max-w-sm ${darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-xl"} backdrop-blur-xl border rounded-3xl shadow-2xl p-8 animate-fade-in-up`}>
           <div className="text-center mb-6">
             <div className="mx-auto w-16 h-16 bg-violet-600/20 text-violet-500 rounded-full flex items-center justify-center mb-4">
@@ -272,7 +365,11 @@ export default function AttendanceForm() {
   }
 
   return (
-    <div className={`min-h-screen ${darkMode ? "bg-neutral-900 text-white" : "bg-gray-100 text-slate-800"} flex items-center justify-center p-4 font-sans transition-colors duration-300`}>
+    <div
+      className={`min-h-screen ${
+        darkMode ? "bg-[conic-gradient(at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-blue-950 to-slate-900 text-white" : "bg-gray-100 text-slate-800"
+      } flex items-center justify-center p-4 font-sans transition-colors duration-300`}
+    >
       <div
         className={`w-full max-w-md ${
           darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-xl"
@@ -371,9 +468,34 @@ export default function AttendanceForm() {
             </div>
           </div>
 
-          {/* Camera / Picture */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider ml-1">Photo Evidence</label>
+          {/* Photo Evidence */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider ml-1">Photo Evidence</label>
+              <div className={`flex p-1 rounded-lg ${darkMode ? "bg-neutral-800" : "bg-gray-200"}`}>
+                <button
+                  type="button"
+                  onClick={() => setPhotoMode("camera")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                    photoMode === "camera" ? "bg-violet-600 text-white shadow-sm" : `${darkMode ? "text-neutral-400 hover:text-white" : "text-neutral-500 hover:text-neutral-800"}`
+                  }`}
+                >
+                  <Camera size={14} />
+                  <span>Camera</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPhotoMode("upload")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                    photoMode === "upload" ? "bg-violet-600 text-white shadow-sm" : `${darkMode ? "text-neutral-400 hover:text-white" : "text-neutral-500 hover:text-neutral-800"}`
+                  }`}
+                >
+                  <Upload size={14} />
+                  <span>Upload</span>
+                </button>
+              </div>
+            </div>
+
             <div
               className={`mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed rounded-xl hover:border-violet-500/50 transition-colors ${
                 darkMode ? "border-neutral-700 bg-neutral-800/30" : "border-gray-300 bg-gray-50"
@@ -384,24 +506,29 @@ export default function AttendanceForm() {
                   <div className="relative w-full h-48 mb-4 rounded-lg overflow-hidden ring-2 ring-violet-500/50 shadow-lg">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                    <button type="button" onClick={() => setImagePreview(null)} className="absolute top-2 right-2 bg-black/60 text-white p-1.5 rounded-full hover:bg-red-500 transition-colors">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                      </svg>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImagePreview(null);
+                        setImageFile(null);
+                      }}
+                      className="absolute top-2 right-2 bg-black/60 text-white p-1.5 rounded-full hover:bg-red-500 transition-colors"
+                    >
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 ) : (
                   <>
-                    <div className="mx-auto h-12 w-12 text-neutral-500 group-hover:text-violet-400 transition-colors">
-                      <Camera size={48} strokeWidth={1.5} />
+                    <div className="mx-auto h-12 w-12 text-neutral-500 group-hover:text-violet-400 transition-colors flex items-center justify-center">
+                      {photoMode === "camera" ? <Camera size={48} strokeWidth={1.5} /> : <ImageIcon size={48} strokeWidth={1.5} />}
                     </div>
                     <div className="flex text-sm text-neutral-400 justify-center">
                       <label htmlFor="file-upload" className="relative cursor-pointer rounded-md font-medium text-violet-400 hover:text-violet-300 focus-within:outline-none">
-                        <span>Take a photo</span>
-                        <input id="file-upload" name="file-upload" type="file" accept="image/*" capture="user" className="sr-only" onChange={handleFileChange} />
+                        <span>{photoMode === "camera" ? "Take a photo" : "Upload a file"}</span>
+                        <input id="file-upload" name="file-upload" type="file" accept="image/*" capture={photoMode === "camera" ? "user" : undefined} className="sr-only" onChange={handleFileChange} />
                       </label>
                     </div>
-                    <p className="text-xs text-neutral-600">Tap to open camera</p>
+                    <p className="text-xs text-neutral-600">{photoMode === "camera" ? "Tap to open camera" : "Tap to browse files"}</p>
                   </>
                 )}
               </div>
@@ -505,6 +632,7 @@ export default function AttendanceForm() {
                 value={formData.information}
                 onChange={handleInputChange}
                 rows={3}
+                required
                 placeholder="Additional info..."
                 className={`w-full ${
                   darkMode ? "bg-neutral-800 text-white border-neutral-700 placeholder:text-neutral-600" : "bg-gray-50 text-slate-800 border-gray-300 placeholder:text-gray-400"
