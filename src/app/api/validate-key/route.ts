@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/db";
-import Config from "@/models/Config";
+import ConfigPassKey from "@/models/ConfigPassKey";
 
 export async function POST(request: Request) {
   try {
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     await dbConnect();
 
     // Fetch the OTP config
-    const config = await Config.findOne({ type: "passKey" }).lean();
+    const config = await ConfigPassKey.findOne({}).lean();
 
     if (!config || !config.passKey) {
       // Fallback or error if config not set.

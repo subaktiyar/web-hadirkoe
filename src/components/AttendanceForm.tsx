@@ -210,8 +210,6 @@ export default function AttendanceForm() {
     setPassKeyLoading(true);
     setPassKeyError("");
 
-    console.log({ passKey });
-
     try {
       const response = await fetch("/api/validate-key", {
         method: "POST",
@@ -220,8 +218,6 @@ export default function AttendanceForm() {
       });
 
       const data = await response.json();
-
-      console.log({ data });
 
       if (data.success) {
         setIsAuthenticated(true);

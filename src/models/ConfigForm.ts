@@ -5,14 +5,12 @@ interface ConfigOption {
   name?: string;
 }
 
-export interface IConfig extends Document {
-  type: string;
+export interface IConfigForm extends Document {
   apkVersion: ConfigOption[];
   presenceType: ConfigOption[];
   workType: ConfigOption[];
   latitude: string;
   longitude: string;
-  passKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,23 +23,21 @@ const ConfigOptionSchema = new Schema(
   { _id: false }
 );
 
-const ConfigSchema: Schema = new Schema(
+const ConfigFormSchema: Schema = new Schema(
   {
-    type: { type: String, required: true, index: true },
     apkVersion: { type: [ConfigOptionSchema], default: [] },
     presenceType: { type: [ConfigOptionSchema], default: [] },
     workType: { type: [ConfigOptionSchema], default: [] },
     latitude: { type: String },
     longitude: { type: String },
-    passKey: { type: String },
   },
   {
     timestamps: { createdAt: true, updatedAt: true },
-    collection: "configs",
+    collection: "config-form",
   }
 );
 
 // Prevent model recompilation error in dev
-const Config: Model<IConfig> = mongoose.models.Config || mongoose.model<IConfig>("Config", ConfigSchema);
+const ConfigForm: Model<IConfigForm> = mongoose.models.ConfigForm || mongoose.model<IConfigForm>("ConfigForm", ConfigFormSchema);
 
-export default Config;
+export default ConfigForm;
