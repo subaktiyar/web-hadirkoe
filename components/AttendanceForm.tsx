@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Camera, MapPin, User, FileText, Info, Send, Loader2, Navigation, Trash2, Moon, Sun, Upload, Image as ImageIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 import imageCompression from "browser-image-compression";
-import Swal from "sweetalert2";
+import CustomAlert, { AlertType } from "./CustomAlert";
 
 const MapComponent = dynamic(() => import("./LeafletMap"), {
   ssr: false,
@@ -102,6 +102,48 @@ export default function AttendanceForm() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [photoMode, setPhotoMode] = useState<"camera" | "upload">("camera");
 
+  const [alertState, setAlertState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: AlertType;
+    onConfirm?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    type: "info",
+  });
+
+  const closeAlert = () => {
+    setAlertState((prev) => ({ ...prev, isOpen: false }));
+  };
+
+  const showAlert = (title: string, message: string, type: AlertType = "info") => {
+    setAlertState({
+      isOpen: true,
+      title,
+      message,
+      type,
+      onConfirm: undefined,
+      confirmText: "OK",
+    });
+  };
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setAlertState({
+      isOpen: true,
+      title,
+      message,
+      type: "warning",
+      onConfirm,
+      confirmText: "Yes, do it!",
+      cancelText: "Cancel",
+    });
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -109,11 +151,7 @@ export default function AttendanceForm() {
 
   const handleLocationClick = () => {
     if (!navigator.geolocation) {
-      Swal.fire({
-        icon: "error",
-        title: "Oops...",
-        text: "Geolocation is not supported by your browser",
-      });
+      showAlert("Oops...", "Geolocation is not supported by your browser", "error");
       return;
     }
 
@@ -129,11 +167,7 @@ export default function AttendanceForm() {
       },
       (error) => {
         console.error("Location error:", error);
-        Swal.fire({
-          icon: "error",
-          title: "Location Error",
-          text: "Unable to retrieve your location",
-        });
+        showAlert("Location Error", "Unable to retrieve your location", "error");
         setLoadingLocation(false);
       }
     );
@@ -144,11 +178,7 @@ export default function AttendanceForm() {
     if (file) {
       // Validate file type
       if (!file.type.startsWith("image/")) {
-        Swal.fire({
-          icon: "warning",
-          title: "Invalid File",
-          text: "Please select an image file (e.g., JPG, PNG).",
-        });
+        showAlert("Invalid File", "Please select an image file (e.g., JPG, PNG).", "warning");
         e.target.value = ""; // Clear the input
         return;
       }
@@ -169,11 +199,7 @@ export default function AttendanceForm() {
         reader.readAsDataURL(compressedFile);
       } catch (error) {
         console.error("Error compressing image:", error);
-        Swal.fire({
-          icon: "error",
-          title: "Compression Error",
-          text: "Failed to compress image",
-        });
+        showAlert("Compression Error", "Failed to compress image", "error");
       }
     }
   };
@@ -182,11 +208,7 @@ export default function AttendanceForm() {
     e.preventDefault();
 
     if (!formData.latitude || !formData.longitude) {
-      Swal.fire({
-        icon: "warning",
-        title: "Location Required",
-        text: "Please get your location first",
-      });
+      showAlert("Location Required", "Please get your location first", "warning");
       return;
     }
 
@@ -198,7 +220,11 @@ export default function AttendanceForm() {
 
       if (imageFile) {
         // Upload to Vercel Blob
-        const uploadResponse = await fetch(`/api/upload?filename=${imageFile.name}`, {
+        // Add timestamp to filename to avoid "blob already exists" error
+        const timestamp = Date.now();
+        const uniqueFilename = `${timestamp}_${imageFile.name}`;
+
+        const uploadResponse = await fetch(`/api/upload?filename=${uniqueFilename}`, {
           method: "POST",
           body: imageFile,
         });
@@ -238,13 +264,7 @@ export default function AttendanceForm() {
         throw new Error(result.error || "Failed to submit");
       }
 
-      Swal.fire({
-        icon: "success",
-        title: "Success!",
-        text: "Attendance Submitted Successfully!",
-        timer: 2000,
-        showConfirmButton: false,
-      });
+      showAlert("Success!", "Attendance Submitted Successfully!", "success");
 
       // Reset form or redirect if needed
       setFormData((prev) => ({
@@ -256,33 +276,19 @@ export default function AttendanceForm() {
     } catch (error: unknown) {
       console.error(error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      Swal.fire({
-        icon: "error",
-        title: "Submission Failed",
-        text: errorMessage,
-      });
+      showAlert("Submission Failed", errorMessage, "error");
     } finally {
       setSubmitLoading(false);
     }
   };
 
-  const handleClear = async () => {
-    const result = await Swal.fire({
-      title: "Are you sure?",
-      text: "You want to clear the form?",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#d33",
-      cancelButtonColor: "#3085d6",
-      confirmButtonText: "Yes, clear it!",
-    });
-
-    if (result.isConfirmed) {
+  const handleClear = () => {
+    showConfirm("Are you sure?", "You want to clear the form?", () => {
       setFormData(defaultValue);
       setImagePreview(null);
       setImageFile(null);
-      Swal.fire("Cleared!", "Form has been reset.", "success");
-    }
+      showAlert("Cleared!", "Form has been reset.", "success");
+    });
   };
 
   const updateLocation = (lat: string, lng: string) => {
@@ -672,6 +678,17 @@ export default function AttendanceForm() {
           </div>
         </form>
       </div>
+
+      <CustomAlert
+        isOpen={alertState.isOpen}
+        onClose={closeAlert}
+        title={alertState.title}
+        message={alertState.message}
+        type={alertState.type}
+        onConfirm={alertState.onConfirm}
+        confirmText={alertState.confirmText}
+        cancelText={alertState.cancelText}
+      />
     </div>
   );
 }
